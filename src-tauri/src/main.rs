@@ -6,7 +6,11 @@ use serde_json::{json, Value};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
+    sync::Mutex,
 };
+use tauri::State;
+
+type MutExpenses = Mutex<Option<Expenses>>;
 
 const FILENAME: &str = "expenses.json";
 
@@ -51,7 +55,14 @@ impl ExpenseBuilder {
     }
 }
 
-fn update_net_worth(json_content: &mut Value) -> Value {
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Expenses {
+    expenses: Vec<Expense>,
+}
+
+#[tauri::command]
+fn update_net_worth(data: String) -> Value {
+    let mut json_content = get_json(&data);
     let income = json_content["income"].as_f64().unwrap() as f32;
     let expenses = json_content["expenses"]
         .as_array()
@@ -61,10 +72,10 @@ fn update_net_worth(json_content: &mut Value) -> Value {
         .sum::<f32>();
     let net_worth = income - expenses;
     json_content["net_worth"] = json!(net_worth);
-    json_content.clone()
+    json_content
 }
 
-fn sum_expenses(json_content: &mut Value) -> f32 {
+fn sum_expenses(json_content: &Value) -> f32 {
     let expenses = json_content["expenses"]
         .as_array()
         .unwrap_or(&Vec::<Value>::new())
@@ -83,11 +94,15 @@ fn check_valid_day(day: u32) -> bool {
     day > 0 && day <= 31
 }
 
-fn read_file(file: &mut File) -> Value {
+fn read_file(file: &mut File) -> String {
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .expect("Failed to read file");
-    let json_content: Value = serde_json::from_str(&contents).unwrap_or(json!({
+    contents
+}
+
+fn get_json(content: &str) -> Value {
+    let json_content: Value = serde_json::from_str(content).unwrap_or(json!({
         "income": 0,
         "expenses": [],
         "net_worth": 0
@@ -95,7 +110,10 @@ fn read_file(file: &mut File) -> Value {
     json_content
 }
 
-fn write_file(file: &mut File, json_content: &Value) -> Value {
+#[tauri::command]
+fn write_file(data: String) {
+    let mut file = get_file();
+    let mut json_content = get_json(&data);
     file.set_len(0).expect("Failed to clear file");
     file.seek(SeekFrom::Start(0))
         .expect("Failed to seek to start");
@@ -105,10 +123,11 @@ fn write_file(file: &mut File, json_content: &Value) -> Value {
             .as_bytes(),
     )
     .expect("Failed to write to file");
-    json_content.clone()
 }
 
-fn add_expense(json_content: &mut Value) -> Value {
+#[tauri::command]
+fn add_expense(data: String) -> Value {
+    let mut json_content = get_json(&data);
     let mut input = String::new();
     let mut expenses = json_content["expenses"]
         .as_array()
@@ -183,11 +202,13 @@ fn add_expense(json_content: &mut Value) -> Value {
         Err(error) => println!("error: {}", error),
     }
     json_content["expenses"] = json!(expenses);
-    json_content["net_worth"] = json!(update_net_worth(json_content)["net_worth"]);
-    json_content.clone()
+    json_content["net_worth"] = json!(update_net_worth(&json_content)["net_worth"]);
+    json_content
 }
 
-fn remove_expense(json_content: &mut Value) -> Value {
+#[tauri::command]
+fn remove_expense(data: String) -> Value {
+    let mut json_content = get_json(&data);
     let mut input = String::new();
     println!("Digite o título da despesa que deseja remover: ");
     match std::io::stdin().read_line(&mut input) {
@@ -208,10 +229,12 @@ fn remove_expense(json_content: &mut Value) -> Value {
         Err(error) => println!("error: {}", error),
     }
     json_content["net_worth"] = json!(update_net_worth(json_content)["net_worth"]);
-    json_content.clone()
+    json_content
 }
 
-fn edit_expense(json_content: &mut Value) -> Value {
+#[tauri::command]
+fn edit_expense(data: String) -> Value {
+    let mut json_content = get_json(&data);
     let mut input = String::new();
     println!("Digite o título da despesa que deseja editar: ");
     match std::io::stdin().read_line(&mut input) {
@@ -282,10 +305,12 @@ fn edit_expense(json_content: &mut Value) -> Value {
         Err(error) => println!("error: {}", error),
     }
     json_content["net_worth"] = json!(update_net_worth(json_content)["net_worth"]);
-    json_content.clone()
+    json_content
 }
 
-fn pay_expense(json_content: &mut Value) -> Value {
+#[tauri::command]
+fn pay_expense(data: String) -> Value {
+    let mut json_content = get_json(&data);
     let mut input = String::new();
     println!("Digite o título da despesa que deseja pagar: ");
     match std::io::stdin().read_line(&mut input) {
@@ -305,15 +330,17 @@ fn pay_expense(json_content: &mut Value) -> Value {
         }
         Err(error) => println!("error: {}", error),
     }
-    json_content.clone()
+    json_content
 }
 
-fn reset_paid(json_content: &mut Value) -> Value {
+#[tauri::command]
+fn reset_paid(data: String) -> Value {
+    let mut json_content = get_json(&data);
     let expenses = json_content["expenses"].as_array_mut().unwrap();
     for expense in expenses {
         expense["paid"] = json!(false);
     }
-    json_content.clone()
+    json_content
 }
 
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
@@ -322,24 +349,48 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-fn main() {
+fn get_file() -> File {
     let exe_path: String = match std::env::current_exe() {
         Ok(path) => path.display().to_string(),
         Err(error) => panic!("Problem getting exe path: {:?}", error),
     };
     let file_path = std::fmt::format(format_args!("{}\\{}", exe_path, FILENAME));
-
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .open(file_path)
         .expect("Failed to open file");
+    file
+}
 
+fn main() {
+    let mut file = get_file();
     let mut json_content = read_file(&mut file);
+    let mut expenses = json_content["expenses"]
+        .as_array()
+        .unwrap_or(&Vec::<Value>::new())
+        .iter()
+        .map(|expense| Expense {
+            name: expense["name"].as_str().expect("aaaaaa").to_string(),
+            cost: expense["cost"].as_f64().expect("bbbbbbbb") as f32,
+            paid: expense["paid"].as_bool().expect("cccccccc"),
+            due_date: expense["due_date"].as_u64().expect("dddddddd") as u32,
+        })
+        .collect::<Vec<Expense>>();
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![greet])
+        .manage(Mutex::new(None::<Expenses>))
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            add_expense,
+            remove_expense,
+            edit_expense,
+            pay_expense,
+            reset_paid,
+            update_net_worth,
+            write_file
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
