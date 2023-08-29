@@ -10,11 +10,11 @@ use std::{
 };
 use tauri::State;
 
-type MutExpenses = Mutex<Option<Expenses>>;
+type ContentState = Mutex<Option<Content>>;
 
 const FILENAME: &str = "expenses.json";
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Expense {
     pub name: String,
     pub cost: f32,
@@ -55,39 +55,30 @@ impl ExpenseBuilder {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Expenses {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Content {
     expenses: Vec<Expense>,
+    net_worth: f32,
+    income: f32,
 }
 
 #[tauri::command]
-fn update_net_worth(data: String) -> Value {
-    let mut json_content = get_json(&data);
-    let income = json_content["income"].as_f64().unwrap() as f32;
-    let expenses = json_content["expenses"]
-        .as_array()
-        .unwrap_or(&Vec::<Value>::new())
-        .iter()
-        .map(|expense| expense["cost"].as_f64().unwrap() as f32)
-        .sum::<f32>();
-    let net_worth = income - expenses;
-    json_content["net_worth"] = json!(net_worth);
-    json_content
+fn update_net_worth(state: ContentState) {
+    if let Some(ref mut stater) = *state.lock().unwrap() {
+        let sum = sum_expenses(state);
+        stater.net_worth = state.income - sum;
+    }
 }
 
-fn sum_expenses(json_content: &Value) -> f32 {
-    let expenses = json_content["expenses"]
-        .as_array()
-        .unwrap_or(&Vec::<Value>::new())
-        .iter()
-        .map(|expense| Expense {
-            name: expense["name"].as_str().unwrap().to_string(),
-            cost: expense["cost"].as_f64().unwrap() as f32,
-            paid: expense["paid"].as_bool().unwrap(),
-            due_date: expense["due_date"].as_u64().unwrap() as u32,
-        })
-        .collect::<Vec<Expense>>();
-    expenses.iter().map(|expense| expense.cost).sum::<f32>()
+fn sum_expenses(state: ContentState) -> f32 {
+    if let Some(ref mut state) = *state.lock().unwrap() {
+        return state
+            .expenses
+            .iter()
+            .map(|expense| expense.cost)
+            .sum::<f32>();
+    }
+    0.0
 }
 
 fn check_valid_day(day: u32) -> bool {
@@ -366,8 +357,8 @@ fn get_file() -> File {
 
 fn main() {
     let mut file = get_file();
-    let mut json_content = read_file(&mut file);
-    let mut expenses = json_content["expenses"]
+    let data = get_json(&read_file(&mut file));
+    let mut expenses = data["expenses"]
         .as_array()
         .unwrap_or(&Vec::<Value>::new())
         .iter()
@@ -378,9 +369,16 @@ fn main() {
             due_date: expense["due_date"].as_u64().expect("dddddddd") as u32,
         })
         .collect::<Vec<Expense>>();
+    let mut income = data["income"].as_f64().unwrap() as f32;
+    let mut net_worth = data["net_worth"].as_f64().unwrap() as f32;
+    let mut content = Content {
+        expenses,
+        net_worth,
+        income,
+    };
 
     tauri::Builder::default()
-        .manage(Mutex::new(None::<Expenses>))
+        .manage(Mutex::new(content))
         .invoke_handler(tauri::generate_handler![
             greet,
             add_expense,
