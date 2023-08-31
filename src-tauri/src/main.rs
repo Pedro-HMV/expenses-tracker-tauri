@@ -82,6 +82,7 @@ fn check_valid_day(day: u32) -> bool {
     let month = Local::now().month();
     let leap_year = Local::now().year() % 4 == 0;
     let valid = match month {
+        _ if day < 1 => false,
         1 | 3 | 5 | 7 | 8 | 10 | 12 => day <= 31,
         4 | 6 | 9 | 11 => day <= 30,
         2 if leap_year => day <= 29,
