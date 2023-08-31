@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -8,7 +9,6 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     sync::Mutex,
 };
-use tauri::State;
 
 type ContentState = Mutex<Option<Content>>;
 
@@ -64,25 +64,29 @@ pub struct Content {
 
 #[tauri::command]
 fn update_net_worth(state: ContentState) {
-    if let Some(ref mut stater) = *state.lock().unwrap() {
-        let sum = sum_expenses(state);
-        stater.net_worth = state.income - sum;
+    if let Some(ref mut state) = *state.lock().unwrap() {
+        let sum = sum_expenses(&*state);
+        state.net_worth = state.income - sum;
     }
 }
 
-fn sum_expenses(state: ContentState) -> f32 {
-    if let Some(ref mut state) = *state.lock().unwrap() {
-        return state
-            .expenses
-            .iter()
-            .map(|expense| expense.cost)
-            .sum::<f32>();
-    }
-    0.0
+fn sum_expenses(data: &Content) -> f32 {
+    return data
+        .expenses
+        .iter()
+        .map(|expense| expense.cost)
+        .sum::<f32>();
 }
 
 fn check_valid_day(day: u32) -> bool {
-    day > 0 && day <= 31
+    let month = Local::now().month();
+    let valid = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => day <= 31,
+        4 | 6 | 9 | 11 => day <= 30,
+        2 => day <= 29,
+        _ => false,
+    };
+    valid
 }
 
 fn read_file(file: &mut File) -> String {
@@ -102,242 +106,119 @@ fn get_json(content: &str) -> Value {
 }
 
 #[tauri::command]
-fn write_file(data: String) {
+fn write_file(state: ContentState) -> Result<(), String> {
     let mut file = get_file();
-    let mut json_content = get_json(&data);
-    file.set_len(0).expect("Failed to clear file");
-    file.seek(SeekFrom::Start(0))
-        .expect("Failed to seek to start");
-    file.write_all(
-        serde_json::to_string_pretty(&json_content)
-            .expect("Failed to serialize JSON in write file")
-            .as_bytes(),
-    )
-    .expect("Failed to write to file");
+    if let Some(ref mut state) = *state.lock().unwrap() {
+        let json_content = json!({
+            "income": state.income,
+            "expenses": state.expenses,
+            "net_worth": state.net_worth
+        });
+        file.set_len(0).expect("Failed to clear file");
+        file.seek(SeekFrom::Start(0))
+            .expect("Failed to seek to start");
+        file.write_all(
+            serde_json::to_string_pretty(&json_content)
+                .expect("Failed to serialize JSON in write file")
+                .as_bytes(),
+        )
+        .expect("Failed to write to file");
+        Ok(())
+    } else {
+        Err("An error ocurred".to_string())
+    }
 }
 
 #[tauri::command]
-fn add_expense(data: String) -> Value {
-    let mut json_content = get_json(&data);
-    let mut input = String::new();
-    let mut expenses = json_content["expenses"]
-        .as_array()
-        .unwrap_or(&Vec::<Value>::new())
-        .iter()
-        .map(|expense| Expense {
-            name: expense["name"].as_str().expect("aaaaaa").to_string(),
-            cost: expense["cost"].as_f64().expect("bbbbbbbb") as f32,
-            paid: expense["paid"].as_bool().expect("cccccccc"),
-            due_date: expense["due_date"].as_u64().expect("dddddddd") as u32,
-        })
-        .collect::<Vec<Expense>>();
-    println!("Digite o título da despesa: ");
-    match std::io::stdin().read_line(&mut input) {
-        Ok(_) => {
-            let trimmed = input.trim();
-            let name = trimmed.to_string();
-            loop {
-                input.clear();
-                println!("Digite o dia de vencimento a cada mês");
-                match std::io::stdin().read_line(&mut input) {
-                    Ok(_) => {
-                        let trimmed = input.trim();
-                        if trimmed.len() > 2 {
-                            println!("O dia deve conter no máximo 2 dígitos!");
-                            continue;
-                        } else {
-                            match trimmed.parse::<u32>() {
-                                Ok(value) if !check_valid_day(value) => {
-                                    println!("Digite um dia válido!");
-                                    continue;
-                                }
-                                Ok(value) => {
-                                    let mut expense = Expense::new(name.clone(), value);
-                                    input.clear();
-                                    println!("Digite o valor da despesa (vazio = 0): ");
-                                    match std::io::stdin().read_line(&mut input) {
-                                        Ok(_) => {
-                                            let trimmed = input.trim();
-                                            if trimmed == "" {
-                                                expenses.push(expense.build());
-                                                input.clear()
-                                            } else {
-                                                match trimmed.parse::<f32>() {
-                                                    Ok(value) => {
-                                                        expense.cost(value);
-                                                        expenses.push(expense.build());
-                                                        input.clear();
-                                                    }
-                                                    Err(..) => {
-                                                        println!("Digite um número válido!");
-                                                        input.clear();
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        Err(error) => println!("error: {}", error),
-                                    };
-                                    break;
-                                }
-                                Err(..) => {
-                                    println!("Digite um número válido!");
-                                    input.clear();
-                                }
-                            };
-                        }
-                    }
-                    Err(..) => println!("Digite um número válido!"),
-                };
-            }
+fn add_expense(state: ContentState, data: &str) -> Result<(), String> {
+    if let Some(ref mut state) = *state.lock().unwrap() {
+        let expense = get_json(data);
+        if !check_valid_day(expense["due_date"].as_u64().unwrap() as u32) {
+            return Err(format!("Invalid day for {}", Local::now().month()));
         }
-        Err(error) => println!("error: {}", error),
-    }
-    json_content["expenses"] = json!(expenses);
-    json_content["net_worth"] = json!(update_net_worth(&json_content)["net_worth"]);
-    json_content
-}
-
-#[tauri::command]
-fn remove_expense(data: String) -> Value {
-    let mut json_content = get_json(&data);
-    let mut input = String::new();
-    println!("Digite o título da despesa que deseja remover: ");
-    match std::io::stdin().read_line(&mut input) {
-        Ok(_) => {
-            let trimmed = input.trim();
-            let expenses = json_content["expenses"].as_array_mut().unwrap();
-            let index = expenses
-                .iter()
-                .position(|expense| expense["name"] == trimmed);
-            match index {
-                Some(index) => {
-                    expenses.remove(index);
-                    input.clear();
-                }
-                None => println!("Despesa não encontrada!"),
-            }
+        if let Some(index) = state
+            .expenses
+            .iter()
+            .position(|e| e.name == expense["name"].as_str().unwrap())
+        {
+            return Err(format!(
+                "Expense named {} already exists",
+                state.expenses[index].name
+            ));
         }
-        Err(error) => println!("error: {}", error),
+        state.expenses.push(
+            Expense::new(
+                expense["name"].as_str().unwrap().to_string(),
+                expense["due_date"].as_u64().unwrap() as u32,
+            )
+            .cost(expense["cost"].as_f64().unwrap() as f32)
+            .build(),
+        );
+        Ok(())
+    } else {
+        Err("An error ocurred".to_string())
     }
-    json_content["net_worth"] = json!(update_net_worth(json_content)["net_worth"]);
-    json_content
 }
 
 #[tauri::command]
-fn edit_expense(data: String) -> Value {
-    let mut json_content = get_json(&data);
-    let mut input = String::new();
-    println!("Digite o título da despesa que deseja editar: ");
-    match std::io::stdin().read_line(&mut input) {
-        Ok(_) => {
-            let trimmed = input.trim();
-            let expenses = json_content["expenses"].as_array_mut().unwrap();
-            let index = expenses
-                .iter()
-                .position(|expense| expense["name"] == trimmed);
-            match index {
-                Some(index) => {
-                    input.clear();
-                    println!("Digite o novo título da despesa (vazio = manter): ");
-                    match std::io::stdin().read_line(&mut input) {
-                        Ok(_) => {
-                            let trimmed = input.trim();
-                            if trimmed != "" {
-                                expenses[index]["name"] = json!(trimmed);
-                            }
-                            input.clear();
-                        }
-                        Err(error) => println!("error: {}", error),
-                    }
-                    println!("Digite o novo valor da despesa (vazio = manter): ");
-                    match std::io::stdin().read_line(&mut input) {
-                        Ok(_) => {
-                            let trimmed = input.trim();
-                            if trimmed != "" {
-                                match trimmed.parse::<f32>() {
-                                    Ok(value) => {
-                                        expenses[index]["cost"] = json!(value);
-                                        input.clear();
-                                    }
-                                    Err(..) => println!("Digite um número válido!"),
-                                }
-                            }
-                        }
-                        Err(error) => println!("error: {}", error),
-                    }
-                    loop {
-                        println!("Digite o novo dia de vencimento (vazio = manter): ");
-                        match std::io::stdin().read_line(&mut input) {
-                            Ok(_) => {
-                                let trimmed = input.trim();
-                                if trimmed != "" {
-                                    match trimmed.parse::<u32>() {
-                                        Ok(value) if check_valid_day(value) => {
-                                            expenses[index]["due_date"] = json!(value);
-                                            input.clear();
-                                            break;
-                                        }
-                                        Ok(_) => {
-                                            println!("Digite um dia válido!");
-                                            input.clear();
-                                            continue;
-                                        }
-                                        Err(..) => println!("Digite um número válido!"),
-                                    }
-                                }
-                            }
-                            Err(error) => println!("error: {}", error),
-                        }
-                    }
-                }
-                None => println!("Despesa não encontrada!"),
-            }
+fn remove_expense(state: ContentState, title: &str) -> Result<(), String> {
+    if let Some(ref mut state) = *state.lock().unwrap() {
+        if let Some(index) = state.expenses.iter().position(|e| e.name == title) {
+            state.expenses.remove(index);
+            Ok(())
+        } else {
+            Err(format!("No expense named {title}"))
         }
-        Err(error) => println!("error: {}", error),
+    } else {
+        Err("An error ocurred".to_string())
     }
-    json_content["net_worth"] = json!(update_net_worth(json_content)["net_worth"]);
-    json_content
 }
 
 #[tauri::command]
-fn pay_expense(data: String) -> Value {
-    let mut json_content = get_json(&data);
-    let mut input = String::new();
-    println!("Digite o título da despesa que deseja pagar: ");
-    match std::io::stdin().read_line(&mut input) {
-        Ok(_) => {
-            let trimmed = input.trim();
-            let expenses = json_content["expenses"].as_array_mut().unwrap();
-            let index = expenses
-                .iter()
-                .position(|expense| expense["name"] == trimmed);
-            match index {
-                Some(index) => {
-                    expenses[index]["paid"] = json!(true);
-                    input.clear();
-                }
-                None => println!("Despesa não encontrada!"),
-            }
+fn edit_expense(state: ContentState, data: &str) -> Result<(), String> {
+    if let Some(ref mut state) = *state.lock().unwrap() {
+        let expense = get_json(data);
+        if let Some(index) = state
+            .expenses
+            .iter()
+            .position(|e| e.name == expense["name"].as_str().unwrap())
+        {
+            state.expenses[index].name = expense["name"].as_str().unwrap().to_string();
+            state.expenses[index].cost = expense["cost"].as_f64().unwrap() as f32;
+            state.expenses[index].due_date = expense["due_date"].as_u64().unwrap() as u32;
+            Ok(())
+        } else {
+            Err(format!("No expense named {}", expense["name"]))
         }
-        Err(error) => println!("error: {}", error),
+    } else {
+        Err("An error ocurred".to_string())
     }
-    json_content
 }
 
 #[tauri::command]
-fn reset_paid(data: String) -> Value {
-    let mut json_content = get_json(&data);
-    let expenses = json_content["expenses"].as_array_mut().unwrap();
-    for expense in expenses {
-        expense["paid"] = json!(false);
+fn pay_expense(state: ContentState, title: &str) -> Result<(), String> {
+    if let Some(ref mut state) = *state.lock().unwrap() {
+        if let Some(index) = state.expenses.iter().position(|e| e.name == title) {
+            state.expenses[index].paid = !state.expenses[index].paid;
+            Ok(())
+        } else {
+            Err(format!("No expense named {}", title))
+        }
+    } else {
+        Err("An error ocurred".to_string())
     }
-    json_content
 }
 
-// Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+fn reset_paid(state: ContentState) -> Result<(), String> {
+    if let Some(ref mut state) = *state.lock().unwrap() {
+        for expense in state.expenses.iter_mut() {
+            expense.paid = false;
+        }
+        Ok(())
+    } else {
+        Err("An error ocurred".to_string())
+    }
 }
 
 fn get_file() -> File {
@@ -346,7 +227,7 @@ fn get_file() -> File {
         Err(error) => panic!("Problem getting exe path: {:?}", error),
     };
     let file_path = std::fmt::format(format_args!("{}\\{}", exe_path, FILENAME));
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
@@ -358,7 +239,7 @@ fn get_file() -> File {
 fn main() {
     let mut file = get_file();
     let data = get_json(&read_file(&mut file));
-    let mut expenses = data["expenses"]
+    let expenses = data["expenses"]
         .as_array()
         .unwrap_or(&Vec::<Value>::new())
         .iter()
@@ -369,9 +250,9 @@ fn main() {
             due_date: expense["due_date"].as_u64().expect("dddddddd") as u32,
         })
         .collect::<Vec<Expense>>();
-    let mut income = data["income"].as_f64().unwrap() as f32;
-    let mut net_worth = data["net_worth"].as_f64().unwrap() as f32;
-    let mut content = Content {
+    let income = data["income"].as_f64().unwrap() as f32;
+    let net_worth = data["net_worth"].as_f64().unwrap() as f32;
+    let content = Content {
         expenses,
         net_worth,
         income,
@@ -380,7 +261,6 @@ fn main() {
     tauri::Builder::default()
         .manage(Mutex::new(content))
         .invoke_handler(tauri::generate_handler![
-            greet,
             add_expense,
             remove_expense,
             edit_expense,
