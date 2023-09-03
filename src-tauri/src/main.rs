@@ -9,8 +9,7 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     sync::Mutex,
 };
-
-type ContentState = Mutex<Option<Content>>;
+use tauri::State;
 
 const FILENAME: &str = "expenses.json";
 
@@ -55,27 +54,36 @@ impl ExpenseBuilder {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Content {
-    expenses: Vec<Expense>,
-    net_worth: f32,
-    income: f32,
+    expenses: Mutex<Option<Vec<Expense>>>,
+    net_worth: Mutex<f32>,
+    income: Mutex<f32>,
 }
 
 #[tauri::command]
-fn update_net_worth(state: ContentState) {
-    if let Some(ref mut state) = *state.lock().unwrap() {
-        let sum = sum_expenses(&*state);
-        state.net_worth = state.income - sum;
-    }
+fn get_content(state: State<Content>) -> Value {
+    json!(
+        {
+            "expenses": *state.expenses.lock().unwrap(),
+            "net_worth": *state.net_worth.lock().unwrap(),
+            "income": *state.income.lock().unwrap()
+        }
+    )
+}
+
+#[tauri::command]
+fn update_net_worth(state: State<Content>) {
+    let income = *state.income.lock().unwrap();
+    let sum = sum_expenses(&*state);
+    *state.net_worth.lock().unwrap() = income - sum;
 }
 
 fn sum_expenses(data: &Content) -> f32 {
-    return data
-        .expenses
-        .iter()
-        .map(|expense| expense.cost)
-        .sum::<f32>();
+    if let Some(ref expenses) = *data.expenses.lock().unwrap() {
+        return expenses.iter().map(|e| e.cost).sum::<f32>();
+    }
+    0.0
 }
 
 fn check_valid_day(day: u32) -> bool {
@@ -109,47 +117,38 @@ fn get_json(content: &str) -> Value {
 }
 
 #[tauri::command]
-fn write_file(state: ContentState) -> Result<(), String> {
+fn write_file(state: State<Content>) -> Result<(), String> {
     let mut file = get_file();
-    if let Some(ref mut state) = *state.lock().unwrap() {
-        let json_content = json!({
-            "income": state.income,
-            "expenses": state.expenses,
-            "net_worth": state.net_worth
-        });
-        file.set_len(0).expect("Failed to clear file");
-        file.seek(SeekFrom::Start(0))
-            .expect("Failed to seek to start");
-        file.write_all(
-            serde_json::to_string_pretty(&json_content)
-                .expect("Failed to serialize JSON in write file")
-                .as_bytes(),
-        )
-        .expect("Failed to write to file");
-        Ok(())
-    } else {
-        Err("An error ocurred".to_string())
-    }
+    let json_content = get_content(state.clone());
+    file.set_len(0).expect("Failed to clear file");
+    file.seek(SeekFrom::Start(0))
+        .expect("Failed to seek to start");
+    file.write_all(
+        serde_json::to_string_pretty(&json_content)
+            .expect("Failed to serialize JSON in write file")
+            .as_bytes(),
+    )
+    .expect("Failed to write to file");
+    Ok(())
 }
 
 #[tauri::command]
-fn add_expense(state: ContentState, data: &str) -> Result<(), String> {
-    if let Some(ref mut state) = *state.lock().unwrap() {
-        let expense = get_json(data);
-        if !check_valid_day(expense["due_date"].as_u64().unwrap() as u32) {
-            return Err(format!("Invalid day for {}", Local::now().month()));
-        }
-        if let Some(index) = state
-            .expenses
+fn add_expense(state: State<Content>, data: &str) -> Result<(), String> {
+    let expense = get_json(data);
+    if !check_valid_day(expense["due_date"].as_u64().unwrap() as u32) {
+        return Err(format!("Invalid day for {}", Local::now().month()));
+    }
+    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
+        if let Some(index) = expenses
             .iter()
             .position(|e| e.name == expense["name"].as_str().unwrap())
         {
             return Err(format!(
                 "Expense named {} already exists",
-                state.expenses[index].name
+                expenses[index].name
             ));
         }
-        state.expenses.push(
+        expenses.push(
             Expense::new(
                 expense["name"].as_str().unwrap().to_string(),
                 expense["due_date"].as_u64().unwrap() as u32,
@@ -157,65 +156,71 @@ fn add_expense(state: ContentState, data: &str) -> Result<(), String> {
             .cost(expense["cost"].as_f64().unwrap() as f32)
             .build(),
         );
-        Ok(())
+        return Ok(());
     } else {
-        Err("An error ocurred".to_string())
+        *state.expenses.lock().unwrap() = Some(vec![Expense::new(
+            expense["name"].as_str().unwrap().to_string(),
+            expense["due_date"].as_u64().unwrap() as u32,
+        )
+        .cost(expense["cost"].as_f64().unwrap() as f32)
+        .build()]);
+
+        return Ok(());
     }
 }
 
 #[tauri::command]
-fn remove_expense(state: ContentState, title: &str) -> Result<(), String> {
-    if let Some(ref mut state) = *state.lock().unwrap() {
-        if let Some(index) = state.expenses.iter().position(|e| e.name == title) {
-            state.expenses.remove(index);
+fn remove_expense(state: State<Content>, title: &str) -> Result<(), String> {
+    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
+        if let Some(index) = expenses.iter().position(|e| e.name == title) {
+            expenses.remove(index);
             Ok(())
         } else {
             Err(format!("No expense named {title}"))
         }
     } else {
-        Err("An error ocurred".to_string())
+        Err("There are no expenses to delete".to_string())
     }
 }
 
 #[tauri::command]
-fn edit_expense(state: ContentState, data: &str) -> Result<(), String> {
-    if let Some(ref mut state) = *state.lock().unwrap() {
+fn edit_expense(state: State<Content>, data: &str) -> Result<(), String> {
+    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
         let expense = get_json(data);
-        if let Some(index) = state
-            .expenses
+        if let Some(index) = expenses
             .iter()
             .position(|e| e.name == expense["name"].as_str().unwrap())
         {
-            state.expenses[index].name = expense["name"].as_str().unwrap().to_string();
-            state.expenses[index].cost = expense["cost"].as_f64().unwrap() as f32;
-            state.expenses[index].due_date = expense["due_date"].as_u64().unwrap() as u32;
+            expenses[index].name = expense["name"].as_str().unwrap().to_string();
+            expenses[index].cost = expense["cost"].as_f64().unwrap() as f32;
+            expenses[index].due_date = expense["due_date"].as_u64().unwrap() as u32;
             Ok(())
         } else {
             Err(format!("No expense named {}", expense["name"]))
         }
     } else {
-        Err("An error ocurred".to_string())
+        Err("There are no expenses to edit".to_string())
     }
 }
 
 #[tauri::command]
-fn pay_expense(state: ContentState, title: &str) -> Result<(), String> {
-    if let Some(ref mut state) = *state.lock().unwrap() {
-        if let Some(index) = state.expenses.iter().position(|e| e.name == title) {
-            state.expenses[index].paid = !state.expenses[index].paid;
+fn pay_expense(state: State<Content>, title: &str) -> Result<(), String> {
+    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
+        if let Some(index) = expenses.iter().position(|e| e.name == title) {
+            expenses[index].paid = expenses[index].paid;
             Ok(())
         } else {
             Err(format!("No expense named {}", title))
         }
     } else {
-        Err("An error ocurred".to_string())
+        Err("There are no expenses to pay".to_string())
     }
 }
 
 #[tauri::command]
-fn reset_paid(state: ContentState) -> Result<(), String> {
-    if let Some(ref mut state) = *state.lock().unwrap() {
-        for expense in state.expenses.iter_mut() {
+fn reset_paid(state: State<Content>) -> Result<(), String> {
+    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
+        for expense in expenses.iter_mut() {
             expense.paid = false;
         }
         Ok(())
@@ -253,16 +258,18 @@ fn main() {
             due_date: expense["due_date"].as_u64().expect("dddddddd") as u32,
         })
         .collect::<Vec<Expense>>();
-    let income = data["income"].as_f64().unwrap() as f32;
-    let net_worth = data["net_worth"].as_f64().unwrap() as f32;
-    let content = Content {
-        expenses,
-        net_worth,
-        income,
+    let content = {
+        let income = data["income"].as_f64().unwrap() as f32;
+        let net_worth = data["net_worth"].as_f64().unwrap() as f32;
+        Content {
+            expenses: Mutex::new(Some(expenses)),
+            net_worth: Mutex::new(net_worth),
+            income: Mutex::new(income),
+        }
     };
 
     tauri::Builder::default()
-        .manage(Mutex::new(content))
+        .manage(content)
         .invoke_handler(tauri::generate_handler![
             add_expense,
             remove_expense,
@@ -270,7 +277,8 @@ fn main() {
             pay_expense,
             reset_paid,
             update_net_worth,
-            write_file
+            write_file,
+            get_content
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
