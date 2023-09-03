@@ -57,7 +57,17 @@ pub fn get_expenses() -> Html {
         })
     };
 
-    html! {}
+    html! {
+        <main class="container">
+
+            <form class="row" onsubmit={get_data}>
+                <input id="greet-input" ref={e_input} placeholder="Click me" />
+                <button type="submit">{"Click me"}</button>
+            </form>
+
+            <p><b>{ &*i_data }</b></p>
+        </main>
+    }
 }
 
 #[function_component(App)]

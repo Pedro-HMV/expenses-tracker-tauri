@@ -62,14 +62,17 @@ pub struct Content {
 }
 
 #[tauri::command]
-fn get_content(state: State<Content>) -> Value {
-    json!(
+fn get_content(state: State<Content>) -> String {
+    match serde_json::to_string(&json!(
         {
             "expenses": *state.expenses.lock().unwrap(),
             "net_worth": *state.net_worth.lock().unwrap(),
             "income": *state.income.lock().unwrap()
         }
-    )
+    )) {
+        Ok(content) => content,
+        _ => "Failed to get content".to_string(),
+    }
 }
 
 #[tauri::command]
@@ -236,18 +239,24 @@ fn reset_paid(state: State<Content>) -> Result<(), String> {
 }
 
 fn get_file() -> File {
-    let exe_path: String = match std::env::current_exe() {
-        Ok(path) => path.display().to_string(),
-        Err(error) => panic!("Problem getting exe path: {:?}", error),
-    };
-    let file_path = std::fmt::format(format_args!("{}\\{}", exe_path, FILENAME));
+    //TODO: Fix this
+    // let exe_path: String = match std::env::current_exe() {
+    //     Ok(path) => path.display().to_string(),
+    //     Err(error) => panic!("Problem getting exe path: {:?}", error),
+    // };
+    // let file_path = std::fmt::format(format_args!("{}\\{}", exe_path, FILENAME));
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open(file_path)
+        .open(FILENAME)
         .expect("Failed to open file");
     file
+}
+
+#[tauri::command]
+fn greet(name: &str) -> String {
+    format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
 fn main() {
@@ -265,8 +274,8 @@ fn main() {
         })
         .collect::<Vec<Expense>>();
     let content = {
-        let income = data["income"].as_f64().unwrap() as f32;
-        let net_worth = data["net_worth"].as_f64().unwrap() as f32;
+        let income = data["income"].as_f64().unwrap_or_default() as f32;
+        let net_worth = data["net_worth"].as_f64().unwrap_or_default() as f32;
         Content {
             expenses: Mutex::new(Some(expenses)),
             net_worth: Mutex::new(net_worth),
@@ -285,7 +294,8 @@ fn main() {
             update_net_worth,
             edit_income,
             write_file,
-            get_content
+            get_content,
+            greet
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
