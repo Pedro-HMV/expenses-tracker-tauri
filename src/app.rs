@@ -15,6 +15,51 @@ struct GreetArgs<'a> {
     name: &'a str,
 }
 
+#[derive(Serialize, Deserialize)]
+struct ContentArgs<'a> {
+    content: &'a str,
+}
+
+#[function_component(AppData)]
+pub fn get_expenses() -> Html {
+    let e_input = use_node_ref();
+
+    let o_data = use_state(|| String::new());
+    let i_data = use_state(|| String::new());
+
+    {
+        let i_data = i_data.clone();
+        let o_data = o_data.clone();
+        let o_data2 = o_data.clone();
+        use_effect_with_deps(
+            move |_| {
+                spawn_local(async move {
+                    if o_data.is_empty() {
+                        return;
+                    }
+
+                    let args = to_value(&ContentArgs { content: &*o_data }).unwrap();
+                    let new_data = invoke("get_content", args).await.as_string().unwrap();
+                    i_data.set(new_data);
+                });
+                || {}
+            },
+            o_data2,
+        );
+    }
+
+    let get_data = {
+        let o_data = o_data.clone();
+        let e_input = e_input.clone();
+        Callback::from(move |e: SubmitEvent| {
+            e.prevent_default();
+            o_data.set(e_input.cast::<web_sys::HtmlInputElement>().unwrap().value());
+        })
+    };
+
+    html! {}
+}
+
 #[function_component(App)]
 pub fn app() -> Html {
     let greet_input_ref = use_node_ref();
