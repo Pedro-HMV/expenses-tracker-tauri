@@ -218,6 +218,12 @@ fn pay_expense(state: State<Content>, title: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn edit_income(state: State<Content>, income: f32) -> Result<(), String> {
+    *state.income.lock().unwrap() = income;
+    Ok(())
+}
+
+#[tauri::command]
 fn reset_paid(state: State<Content>) -> Result<(), String> {
     if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
         for expense in expenses.iter_mut() {
@@ -277,6 +283,7 @@ fn main() {
             pay_expense,
             reset_paid,
             update_net_worth,
+            edit_income,
             write_file,
             get_content
         ])
