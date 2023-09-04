@@ -39,50 +39,31 @@ struct ContentArgs<'a> {
 
 #[function_component(AppData)]
 pub fn get_expenses() -> Html {
-    let element = use_node_ref();
-    let o_data = use_state(|| String::new());
-    let i_data = use_state(|| Content {
+    let app_data = use_state(|| Content {
         expenses: Vec::new(),
         net_worth: 0.0,
         income: 0.0,
     });
 
     {
-        let i_data = i_data.clone();
-        let o_data = o_data.clone();
-        let o_data2 = o_data.clone();
-        use_effect_with_deps(
-            move |_| {
-                spawn_local(async move {
-                    if o_data.is_empty() {
-                        return;
-                    }
-
-                    let args = to_value(&ContentArgs { content: &*o_data }).unwrap();
-                    let new_data = invoke("get_content", args).await.as_string().unwrap();
-                    let new_data: Content = serde_json::from_str(&new_data).unwrap();
-                    i_data.set(new_data);
-                });
-                || {}
-            },
-            o_data2,
-        );
+        let app_data = app_data.clone();
+        use_effect(move || {
+            spawn_local(async move {
+                let content = invoke("get_content", JsValue::NULL)
+                    .await
+                    .as_string()
+                    .unwrap();
+                let new_data: Content = serde_json::from_str(&content).unwrap();
+                app_data.set(new_data);
+            });
+        });
     }
-
-    let get_data = {
-        let o_data = o_data.clone();
-        Callback::from(move |e: Event| {
-            e.prevent_default();
-            o_data.set(element.cast::<HtmlElement>().unwrap().inner_html());
-        })
-    };
 
     html! {
         <main class="container">
-
-            <div class="expense-list" onload={get_data}>
+            <div class="expense-list" >
                 <ul>
-                    <li>{ &*i_data.expenses[0].name } </li>
+                    <li>{ &*app_data.expenses[0].name } </li>
                 </ul>
             </div>
         </main>
