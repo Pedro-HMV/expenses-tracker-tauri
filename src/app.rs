@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+use web_sys::HtmlElement;
 use yew::prelude::*;
 
 #[wasm_bindgen]
@@ -16,16 +18,34 @@ struct GreetArgs<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+struct Content {
+    expenses: Vec<Expense>,
+    net_worth: f32,
+    income: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Expense {
+    name: String,
+    cost: f32,
+    paid: bool,
+    due_date: u32,
+}
+
+#[derive(Serialize, Deserialize)]
 struct ContentArgs<'a> {
     content: &'a str,
 }
 
 #[function_component(AppData)]
 pub fn get_expenses() -> Html {
-    let e_input = use_node_ref();
-
+    let element = use_node_ref();
     let o_data = use_state(|| String::new());
-    let i_data = use_state(|| String::new());
+    let i_data = use_state(|| Content {
+        expenses: Vec::new(),
+        net_worth: 0.0,
+        income: 0.0,
+    });
 
     {
         let i_data = i_data.clone();
@@ -40,6 +60,7 @@ pub fn get_expenses() -> Html {
 
                     let args = to_value(&ContentArgs { content: &*o_data }).unwrap();
                     let new_data = invoke("get_content", args).await.as_string().unwrap();
+                    let new_data: Content = serde_json::from_str(&new_data).unwrap();
                     i_data.set(new_data);
                 });
                 || {}
@@ -50,22 +71,20 @@ pub fn get_expenses() -> Html {
 
     let get_data = {
         let o_data = o_data.clone();
-        let e_input = e_input.clone();
-        Callback::from(move |e: SubmitEvent| {
+        Callback::from(move |e: Event| {
             e.prevent_default();
-            o_data.set(e_input.cast::<web_sys::HtmlInputElement>().unwrap().value());
+            o_data.set(element.cast::<HtmlElement>().unwrap().inner_html());
         })
     };
 
     html! {
         <main class="container">
 
-            <form class="row" onsubmit={get_data}>
-                <input id="greet-input" ref={e_input} placeholder="Click me" />
-                <button type="submit">{"Click me"}</button>
-            </form>
-
-            <p><b>{ &*i_data }</b></p>
+            <div class="expense-list" onload={get_data}>
+                <ul>
+                    <li>{ &*i_data.expenses[0].name } </li>
+                </ul>
+            </div>
         </main>
     }
 }

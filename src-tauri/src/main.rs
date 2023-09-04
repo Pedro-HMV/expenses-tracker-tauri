@@ -62,17 +62,14 @@ pub struct Content {
 }
 
 #[tauri::command]
-fn get_content(state: State<Content>) -> String {
-    match serde_json::to_string(&json!(
+fn get_content(state: State<Content>) -> Value {
+    return json!(
         {
-            "expenses": *state.expenses.lock().unwrap(),
-            "net_worth": *state.net_worth.lock().unwrap(),
-            "income": *state.income.lock().unwrap()
+            "expenses": &*state.expenses.lock().unwrap(),
+            "net_worth": &*state.net_worth.lock().unwrap(),
+            "income": &*state.income.lock().unwrap()
         }
-    )) {
-        Ok(content) => content,
-        _ => "Failed to get content".to_string(),
-    }
+    );
 }
 
 #[tauri::command]
