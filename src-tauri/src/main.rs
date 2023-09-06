@@ -56,7 +56,7 @@ impl ExpenseBuilder {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Content {
-    expenses: Mutex<Option<Vec<Expense>>>,
+    expenses: Mutex<Vec<Expense>>,
     net_worth: Mutex<f32>,
     income: Mutex<f32>,
 }
@@ -80,10 +80,8 @@ fn update_net_worth(state: State<Content>) {
 }
 
 fn sum_expenses(data: &Content) -> f32 {
-    if let Some(ref expenses) = *data.expenses.lock().unwrap() {
-        return expenses.iter().map(|e| e.cost).sum::<f32>();
-    }
-    0.0
+    let expenses = data.expenses.lock().unwrap();
+    return expenses.iter().map(|e| e.cost).sum::<f32>();
 }
 
 fn check_valid_day(day: u32) -> bool {
@@ -138,82 +136,64 @@ fn add_expense(state: State<Content>, data: &str) -> Result<(), String> {
     if !check_valid_day(expense["due_date"].as_u64().unwrap() as u32) {
         return Err(format!("Invalid day for {}", Local::now().month()));
     }
-    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
-        if let Some(index) = expenses
-            .iter()
-            .position(|e| e.name == expense["name"].as_str().unwrap())
-        {
-            return Err(format!(
-                "Expense named {} already exists",
-                expenses[index].name
-            ));
-        }
-        expenses.push(
-            Expense::new(
-                expense["name"].as_str().unwrap().to_string(),
-                expense["due_date"].as_u64().unwrap() as u32,
-            )
-            .cost(expense["cost"].as_f64().unwrap() as f32)
-            .build(),
-        );
-        return Ok(());
-    } else {
-        *state.expenses.lock().unwrap() = Some(vec![Expense::new(
+    let mut expenses = state.expenses.lock().unwrap();
+    if let Some(index) = expenses
+        .iter()
+        .position(|e| e.name == expense["name"].as_str().unwrap())
+    {
+        return Err(format!(
+            "Expense named {} already exists",
+            expenses[index].name
+        ));
+    }
+
+    expenses.push(
+        Expense::new(
             expense["name"].as_str().unwrap().to_string(),
             expense["due_date"].as_u64().unwrap() as u32,
         )
         .cost(expense["cost"].as_f64().unwrap() as f32)
-        .build()]);
-
-        return Ok(());
-    }
+        .build(),
+    );
+    return Ok(());
 }
 
 #[tauri::command]
 fn remove_expense(state: State<Content>, title: &str) -> Result<(), String> {
-    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
-        if let Some(index) = expenses.iter().position(|e| e.name == title) {
-            expenses.remove(index);
-            Ok(())
-        } else {
-            Err(format!("No expense named {title}"))
-        }
+    let mut expenses = state.expenses.lock().unwrap();
+    if let Some(index) = expenses.iter().position(|e| e.name == title) {
+        expenses.remove(index);
+        Ok(())
     } else {
-        Err("There are no expenses to delete".to_string())
+        Err(format!("No expense named {title}"))
     }
 }
 
 #[tauri::command]
 fn edit_expense(state: State<Content>, data: &str) -> Result<(), String> {
-    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
-        let expense = get_json(data);
-        if let Some(index) = expenses
-            .iter()
-            .position(|e| e.name == expense["name"].as_str().unwrap())
-        {
-            expenses[index].name = expense["name"].as_str().unwrap().to_string();
-            expenses[index].cost = expense["cost"].as_f64().unwrap() as f32;
-            expenses[index].due_date = expense["due_date"].as_u64().unwrap() as u32;
-            Ok(())
-        } else {
-            Err(format!("No expense named {}", expense["name"]))
-        }
+    let mut expenses = state.expenses.lock().unwrap();
+    let expense = get_json(data);
+    if let Some(index) = expenses
+        .iter()
+        .position(|e| e.name == expense["name"].as_str().unwrap())
+    {
+        expenses[index].name = expense["name"].as_str().unwrap().to_string();
+        expenses[index].cost = expense["cost"].as_f64().unwrap() as f32;
+        expenses[index].due_date = expense["due_date"].as_u64().unwrap() as u32;
+        Ok(())
     } else {
-        Err("There are no expenses to edit".to_string())
+        Err(format!("No expense named {}", expense["name"]))
     }
 }
 
 #[tauri::command]
 fn pay_expense(state: State<Content>, title: &str) -> Result<(), String> {
-    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
-        if let Some(index) = expenses.iter().position(|e| e.name == title) {
-            expenses[index].paid = expenses[index].paid;
-            Ok(())
-        } else {
-            Err(format!("No expense named {}", title))
-        }
+    let mut expenses = state.expenses.lock().unwrap();
+    if let Some(index) = expenses.iter().position(|e| e.name == title) {
+        expenses[index].paid = expenses[index].paid;
+        Ok(())
     } else {
-        Err("There are no expenses to pay".to_string())
+        Err(format!("No expense named {}", title))
     }
 }
 
@@ -225,14 +205,11 @@ fn edit_income(state: State<Content>, income: f32) -> Result<(), String> {
 
 #[tauri::command]
 fn reset_paid(state: State<Content>) -> Result<(), String> {
-    if let Some(ref mut expenses) = *state.expenses.lock().unwrap() {
-        for expense in expenses.iter_mut() {
-            expense.paid = false;
-        }
-        Ok(())
-    } else {
-        Err("An error ocurred".to_string())
+    let mut expenses = state.expenses.lock().unwrap();
+    for expense in expenses.iter_mut() {
+        expense.paid = false;
     }
+    Ok(())
 }
 
 fn get_file() -> File {
@@ -274,7 +251,7 @@ fn main() {
         let income = data["income"].as_f64().unwrap_or_default() as f32;
         let net_worth = data["net_worth"].as_f64().unwrap_or_default() as f32;
         Content {
-            expenses: Mutex::new(Some(expenses)),
+            expenses: Mutex::new(expenses),
             net_worth: Mutex::new(net_worth),
             income: Mutex::new(income),
         }

@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::HtmlElement;
 use yew::prelude::*;
 
 #[wasm_bindgen]
@@ -44,26 +42,39 @@ pub fn get_expenses() -> Html {
         net_worth: 0.0,
         income: 0.0,
     });
+    let content = use_state(|| String::new());
 
     {
         let app_data = app_data.clone();
+        let content = content.clone();
         use_effect(move || {
             spawn_local(async move {
-                let content = invoke("get_content", JsValue::NULL)
-                    .await
-                    .as_string()
-                    .unwrap();
+                let args = to_value(&ContentArgs {
+                    content: "expenses.json",
+                })
+                .unwrap();
+                let sontent = invoke("get_content", args).await.as_string().unwrap();
+                content.set(sontent);
                 let new_data: Content = serde_json::from_str(&content).unwrap();
                 app_data.set(new_data);
             });
+            || {}
         });
     }
 
+    let load_data = {
+        Callback::from(move |e: Event| {
+            e.prevent_default();
+        })
+    };
+
     html! {
         <main class="container">
-            <div class="expense-list" >
+            <div class="expense-list" onload={load_data}>
                 <ul>
-                    <li>{ &*app_data.expenses[0].name } </li>
+                    // if !app_data.expenses.is_empty()
+                        <li>{ &content.to_string() } </li>
+                    // }
                 </ul>
             </div>
         </main>
