@@ -42,40 +42,33 @@ pub fn get_expenses() -> Html {
         net_worth: 0.0,
         income: 0.0,
     });
-    let content = use_state(|| String::new());
 
     {
         let app_data = app_data.clone();
-        let content = content.clone();
         use_effect(move || {
             spawn_local(async move {
                 let args = to_value(&ContentArgs {
                     content: "expenses.json",
                 })
                 .unwrap();
-                let sontent = invoke("get_content", args).await.as_string().unwrap();
-                content.set(sontent);
-                let new_data: Content = serde_json::from_str(&content).unwrap();
+                let content = invoke("get_content", args).await;
+                let new_data: Content = serde_wasm_bindgen::from_value(content).unwrap();
                 app_data.set(new_data);
             });
             || {}
         });
     }
 
-    let load_data = {
-        Callback::from(move |e: Event| {
-            e.prevent_default();
-        })
-    };
-
     html! {
         <main class="container">
-            <div class="expense-list" onload={load_data}>
-                <ul>
-                    // if !app_data.expenses.is_empty()
-                        <li>{ &content.to_string() } </li>
-                    // }
-                </ul>
+            <div class="expense-list">
+                { for app_data.expenses.iter().map(|expense| html! {
+                    <ul>
+                        <li>{ expense.name.as_str() }</li>
+                        <li>{ expense.cost }</li>
+                        <li>{ expense.due_date }</li>
+                    </ul>
+                })}
             </div>
         </main>
     }
