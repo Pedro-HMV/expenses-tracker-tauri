@@ -198,9 +198,10 @@ fn pay_expense(state: State<Content>, title: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn edit_income(state: State<Content>, income: f32) -> Result<(), String> {
-    *state.income.lock().unwrap() = income;
-    Ok(())
+fn edit_income(state: State<Content>, income: f32) -> Result<f32, String> {
+    let income = &income;
+    *state.income.lock().unwrap() = *income;
+    Ok(*income)
 }
 
 #[tauri::command]
