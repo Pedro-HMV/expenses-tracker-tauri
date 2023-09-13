@@ -98,20 +98,17 @@ fn check_valid_day(day: u32) -> bool {
     valid
 }
 
-fn read_file(file: &mut File) -> String {
+fn read_file(file: &mut File) -> Option<String> {
     let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .expect("Failed to read file");
-    contents
+    file.read_to_string(&mut contents).ok();
+    Some(contents)
 }
 
-fn get_json(content: &str) -> Value {
-    let json_content: Value = serde_json::from_str(content).unwrap_or(json!({
-        "income": 0,
-        "expenses": [],
-        "net_worth": 0
-    }));
-    json_content
+fn get_json(content: &str) -> Result<Value, String> {
+    match serde_json::from_str(content) {
+        Ok(json_content) => Ok(json_content),
+        Err(error) => Err(format!("Failed to parse JSON: {}", error)),
+    }
 }
 
 #[tauri::command]
@@ -132,7 +129,7 @@ fn write_file(state: State<Content>) -> Result<(), String> {
 
 #[tauri::command]
 fn add_expense(state: State<Content>, data: &str) -> Result<(), String> {
-    let expense = get_json(data);
+    let expense = get_json(data)?;
     if !check_valid_day(expense["due_date"].as_u64().unwrap() as u32) {
         return Err(format!("Invalid day for {}", Local::now().month()));
     }
@@ -170,9 +167,9 @@ fn remove_expense(state: State<Content>, title: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn edit_expense(state: State<Content>, data: &str) -> Result<(), String> {
+fn edit_expense(state: State<Content>, data: &str) -> Result<Value, String> {
     let mut expenses = state.expenses.lock().unwrap();
-    let expense = get_json(data);
+    let expense = get_json(data)?;
     if let Some(index) = expenses
         .iter()
         .position(|e| e.name == expense["name"].as_str().unwrap())
@@ -180,7 +177,7 @@ fn edit_expense(state: State<Content>, data: &str) -> Result<(), String> {
         expenses[index].name = expense["name"].as_str().unwrap().to_string();
         expenses[index].cost = expense["cost"].as_f64().unwrap() as f32;
         expenses[index].due_date = expense["due_date"].as_u64().unwrap() as u32;
-        Ok(())
+        Ok(expense)
     } else {
         Err(format!("No expense named {}", expense["name"]))
     }
@@ -236,7 +233,7 @@ fn greet(name: &str) -> String {
 
 fn main() {
     let mut file = get_file();
-    let data = get_json(&read_file(&mut file));
+    let data = get_json(&read_file(&mut file).unwrap_or_default()).unwrap();
     let expenses = data["expenses"]
         .as_array()
         .unwrap_or(&Vec::<Value>::new())

@@ -1,5 +1,6 @@
 use gloo_dialogs::alert;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -23,17 +24,77 @@ struct Content {
     income: f32,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct Expense {
-    name: String,
-    cost: f32,
-    paid: bool,
-    due_date: u32,
+#[derive(Serialize, Deserialize, Clone, Properties, PartialEq)]
+pub struct Expense {
+    #[prop_or_default]
+    pub name: AttrValue,
+    #[prop_or_default]
+    pub cost: f32,
+    #[prop_or_default]
+    pub paid: bool,
+    #[prop_or_default]
+    pub due_date: u32,
 }
 
 #[derive(Serialize, Deserialize)]
 struct ContentArgs<'a> {
     content: &'a str,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ExpenseArgs<'a> {
+    expense: &'a str,
+}
+
+#[function_component(ExpenseComponent)]
+pub fn manage_expenses(expense: &Expense) -> Html {
+    let name = use_state(|| expense.name.clone());
+    let cost = use_state(|| expense.cost.clone());
+    let due_date = use_state(|| expense.due_date.clone());
+    let paid = use_state(|| expense.paid.clone());
+
+    {
+        let name = name.clone();
+        let cost = cost.clone();
+        let due_date = due_date.clone();
+        let paid = paid.clone();
+        let name2 = name.clone();
+        let cost2 = cost.clone();
+        let due_date2 = due_date.clone();
+        let paid2 = paid.clone();
+
+        use_effect_with_deps(move |_| {
+            spawn_local(async move {
+                let args = to_value(&ExpenseArgs {
+                    expense: json!({
+                        "name": name,
+                        "cost": cost,
+                        "due_date": due_date,
+                        "paid": paid
+                    }).as_str().unwrap_or_default()
+                }).unwrap();
+                let success = invoke("edit_expense", args).await;
+                let success = serde_wasm_bindgen::from_value(success).unwrap();
+                match success {
+                    Ok(e) => {
+                        name.set(e.name);
+                        cost.set(e.cost);
+                        due_date.set(e.due_date);
+                        paid.set(e.paid);
+                    }
+                    _ => alert("Erro ao editar despesa!")
+                }
+            })
+        }
+            ,
+            [name2, cost2, due_date2, paid2])
+    }
+
+    html! {
+        <div>
+            <ExpenseEditor />
+        </div>
+    }
 }
 
 #[function_component(AppData)]
